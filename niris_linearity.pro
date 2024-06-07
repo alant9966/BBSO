@@ -11,7 +11,7 @@ offset = 40                                   ; select a 40 x 40 area to examine
 
 for i = 0, 99 do begin                                                                    ; computes the average signal value of the center 40 x 40
   img = readfits(list[i])                                                                 ;     portion of the array for frame 3
-  r[i] = avg( img[1024-256-offset : 1024-256+offset, 1024+256-offset : 1024+256+offset, 3] )              ; *would it be better to compute the avg of all five frames?
+  r[i] = avg( img[1024-256-offset : 1024-256+offset, 1024+256-offset : 1024+256+offset, 3] )              
 endfor
 
 for j = 100, 109 do begin                                                                 ; does the same, but for the dark fields
