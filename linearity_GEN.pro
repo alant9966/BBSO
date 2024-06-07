@@ -19,7 +19,7 @@ offset = 20
 ;
 ;for j = n/2, n-1 do begin                                                                 
 ;  dk = readfits(list[j])                                                                       
-;  darks[j] = avg( dk[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )      
+;  darks[j-(n/2)] = avg( dk[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )      
 ;endfor
 
 print, 'Please input the coordinates of the center of the region of interest.'
