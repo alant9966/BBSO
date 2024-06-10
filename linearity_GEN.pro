@@ -9,30 +9,31 @@ READ, interval, PROMPT='Please input the exposure interval: '
 exposures = ( FINDGEN(n/2) ) * interval + t0                
 signals = fltarr(n/2) & darks = signals 
 
-offset = 20
-
-; If the dark field images are grouped at the end...
-;for i = 0, (n/2)-1 do begin
-;  img = readfits(list[i])
-;  signals[i] = avg( img[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )
-;endfor
-;
-;for j = n/2, n-1 do begin                                                                 
-;  dk = readfits(list[j])                                                                       
-;  darks[j-(n/2)] = avg( dk[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )      
-;endfor
+;offset = 20
+offset = 40
 
 print, 'Please input the coordinates of the center of the region of interest.'
 READ, xcoord, PROMPT='x-coordinate: '
 READ, ycoord, PROMPT='y-coordinate: '
 
-; If the images and dark fields are taken together...
-for i = 0, n/2 - 1 do begin
-  img = readfits(list[2*i+1])
-  dk = readfits(list[2*i])
+; If the dark field images are grouped at the end...
+for i = 0, (n/2)-1 do begin
+  img = readfits(list[i])
   signals[i] = avg( img[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )
-  darks[i] = avg( dk[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )
 endfor
+
+for j = n/2, n-1 do begin                                                                 
+  dk = readfits(list[j])                                                                       
+  darks[j-(n/2)] = avg( dk[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )      
+endfor
+
+; If the images and dark fields are taken together...
+;for i = 0, n/2 - 1 do begin
+;  img = readfits(list[2*i+1])
+;  dk = readfits(list[2*i])
+;  signals[i] = avg( img[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )
+;  darks[i] = avg( dk[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )
+;endfor
 
 res = signals - darks
 
@@ -40,8 +41,9 @@ res = signals - darks
 plot, exposures, res, psym=1, XTITLE='Exposure Time [ms]', YTITLE='Mean Signal [ADU]'
 
 ; Allows the user to test linear regression intervals until satisfied
-cont = boolean(1)
-while cont do begin
+;cont = boolean(1)
+cont = 'yes'
+while cont eq 'yes' do begin
   READ, cil, PROMPT='Please input the linear max (in ms): '
   coeff = LINFIT(exposures[0:(cil*(1/interval))-1], res[0:(cil*(1/interval))-1])
   YFIT = coeff[0] + coeff[1]*exposures
@@ -74,7 +76,7 @@ while cont do begin
   str = ''
   READ, str, PROMPT='Continue regression? (y/n) '
   if (str eq 'n') then begin
-    cont = boolean(0)
+    cont = 'no'
   endif
 endwhile
 
