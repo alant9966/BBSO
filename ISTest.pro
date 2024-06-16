@@ -1,3 +1,9 @@
+; A program that tests the consistency of an illuminator and integrating sphere.
+; Data is taken over a period of time at constant intervals and exposure, and the mean gray values are plotted against time.
+; Ideally, a well-functioning illuminator should have a constant, zero-slope relationship. 
+
+; This program uses the IDLAstro library.
+
 dir = dialog_pickfile(/directory,path='c:\')
 list = file_search( dir + '*.fts' , count = n )
 
@@ -13,8 +19,12 @@ for i = 0, n-1 do begin
   res[i] = avg(img[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset])
 endfor
 
-num = FINDGEN(n)
-plot, num, res, psym=1, XTITLE='Img Number', YTITLE='Mean Signal [ADU]', XMARGIN=[20,5], YMARGIN=[10,5], /YNOZERO
+;stop           ; check for error images (after illuminator has shut off) 
+
+num = FINDGEN(n, INCREMENT=3)
+plot, num, res, psym=1, XTITLE='Time Elapsed (ms)', YTITLE='Mean Signal [ADU]', XMARGIN=[20,5], YMARGIN=[10,5], /YNOZERO
+
+;======================== NONLINEARITY APPROACH ========================
 
 ; Plot a constant line that should represent perfect stability
 YFIT = REPLICATE(avg(res), n)
@@ -69,4 +79,3 @@ nonlin0 = (maxi0 + abs(mini0)) / maxsig0
 print, 'Non-linearity (regression): ', nonlin0*100, '%.'
 
 end
-
