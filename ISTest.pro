@@ -1,8 +1,11 @@
-; A program that tests the consistency of an illuminator and integrating sphere.
-; Data is taken over a period of time at constant intervals and exposure, and the mean gray values are plotted against time.
-; Ideally, a well-functioning illuminator should have a constant, zero-slope relationship. 
-
-; This program uses the IDLAstro library.
+; /**
+;  * ISTest.pro
+;  * Alan Tong
+;  *
+;  * Tests the consistency of an illuminator using an integrating sphere.
+;  * Data is taken over a period of time at constant intervals and exposure, and the mean gray values are plotted against time.
+;  * Ideally, a well-functioning illuminator should have a constant, zero-slope relationship.
+; */
 
 dir = dialog_pickfile(/directory,path='c:\')
 list = file_search( dir + '*.fts' , count = n )

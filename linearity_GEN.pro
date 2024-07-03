@@ -1,12 +1,12 @@
 ; Prompts the user to select a folder, and reads all FITS files into an array of file names
 dir = dialog_pickfile(/directory,path='c:\')
-list = file_search( dir + '*.fts' , count = n )
+list = file_search(dir + '*.fts' , count = n)
 
-; Prompts the user to input the data's starting exposure and interval
-READ, t0, PROMPT='Please input the starting exposure (in ms): '
-READ, interval, PROMPT='Please input the exposure interval: '
+;; Prompts the user to input the data's starting exposure and interval
+;READ, t0, PROMPT='Please input the starting exposure (in ms): '
+;READ, interval, PROMPT='Please input the exposure interval: '
 
-exposures = ( FINDGEN(n/2) ) * interval + t0                
+exposures = fltarr(n/2)                
 signals = fltarr(n/2) & darks = signals 
 
 ;offset = 20
@@ -18,24 +18,36 @@ READ, ycoord, PROMPT='y-coordinate: '
 
 ; If the dark field images are grouped at the end...
 for i = 0, (n/2)-1 do begin
-  img = readfits(list[i])
-  signals[i] = avg( img[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )
-endfor
-
-for j = n/2, n-1 do begin                                                                 
-  dk = readfits(list[j])                                                                       
-  darks[j-(n/2)] = avg( dk[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )      
+  img = readfits(list[i], header)
+  dk = readfits(list[i+(n/2)])
+  
+  signals[i] = avg(img[xcoord-offset:xcoord+offset, ycoord-offset:ycoord+offset, FLOOR((size(img))[3]/2)] )
+  darks[i] = avg(dk[xcoord-offset:xcoord+offset, ycoord-offset:ycoord+offset, FLOOR((size(dk))[3]/2)] )
+  
+  ; The recorded exposure for each image is added to the exposures array.
+  exp = header[26] & expsub = strmid(exp, 0, strpos(exp, '.'))
+  start = strpos(expsub, ' ', /REVERSE_SEARCH) + 1
+  count = strpos(exp, '/') - start - 1
+  exposures[i] = float(strmid(exp, start, count))
 endfor
 
 ; If the images and dark fields are taken together...
 ;for i = 0, n/2 - 1 do begin
 ;  img = readfits(list[2*i+1])
 ;  dk = readfits(list[2*i])
-;  signals[i] = avg( img[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )
-;  darks[i] = avg( dk[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, 3] )
+;  signals[i] = avg( img[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, FLOOR((size(img))[3]/2)] )
+;  darks[i] = avg( dk[xcoord-offset : xcoord+offset, ycoord-offset : ycoord+offset, FLOOR((size(img))[3]/2)] )
+;  
+;  xp = header[26] & expsub = strmid(exp, 0, strpos(exp, '.'))
+;  start = strpos(expsub, ' ', /REVERSE_SEARCH) + 1
+;  count = strpos(exp, '/') - start - 1
+;  exposures[i] = float(strmid(exp, start, count))
 ;endfor
 
 res = signals - darks
+interval = exposures[1] - exposures[0]
+
+;stop
 
 ; Plot the data and perform a linear regression
 plot, exposures, res, psym=1, XTITLE='Exposure Time [ms]', YTITLE='Mean Signal [ADU]'
@@ -44,18 +56,27 @@ plot, exposures, res, psym=1, XTITLE='Exposure Time [ms]', YTITLE='Mean Signal [
 ;cont = boolean(1)
 cont = 'yes'
 while cont eq 'yes' do begin
-  READ, cil, PROMPT='Please input the linear max (in ms): '
-  coeff = LINFIT(exposures[0:(cil*(1/interval))-1], res[0:(cil*(1/interval))-1])
+  READ, cilms, PROMPT='Please input the linear max (ADU): '
+  
+  ind = 0
+  for i = 0, (n/2)-2 do begin
+    if (res[i] le cilms) and (res[i+1] ge cilms) then begin
+      ind = i
+      break
+    endif
+  endfor
+  
+  coeff = LINFIT(exposures[0:ind], res[0:ind])
   YFIT = coeff[0] + coeff[1]*exposures
   
   OPLOT, exposures, YFIT
-  print, 'Equation of the linear regression from x =', t0, ' ms to x =', cil, ' ms: y =', coeff[1], 'x +', coeff[0]
+  print, 'Equation of linear regression from 0 to '+strtrim(string(cilms),2)+' ADU: y = '+strtrim(string(coeff[1]),2)+'x + '+strtrim(string(coeff[0]),2)
   
   ; Determine the nonlinearity of the data
-  mini = res[cil*(1/interval)-1]
+  mini = res[ind]
   maxi = 0.0
   maxsig = 0.0
-  for index = 0, (cil*(1/interval))-1 do begin
+  for index = 0, ind do begin
     curr = res[index] - (coeff[1]*exposures[index] + coeff[0])
     if curr gt maxi then begin
       maxi = curr
@@ -70,8 +91,8 @@ while cont eq 'yes' do begin
   
   nonlin = (maxi + abs(mini)) / maxsig
   
-  print, 'The maximum deviation is ', maxi, ', the minimum deviation is ', mini, ' and the maximum signal is ', maxsig, '.'
-  print, 'The nonlinearity over the linear range is ', nonlin*100, '%.'
+  print, 'The maximum deviation is '+strtrim(string(maxi),2)+', the minimum deviation is '+strtrim(string(mini),2)+' and the maximum signal is '+strtrim(string(maxsig),2)+'.'
+  print, 'The nonlinearity over the linear range is '+strtrim(string(nonlin*100),2)+'%.'
   
   str = ''
   READ, str, PROMPT='Continue regression? (y/n) '
@@ -81,6 +102,3 @@ while cont eq 'yes' do begin
 endwhile
 
 end
-
-; possible improvement for the future: have the program read the first two FITS files and
-; automatically set the initial exposure and interval
