@@ -2,15 +2,16 @@
 ;  * mask.pro
 ;  * Alan Tong
 ;  *
-;  * Identifies and outputs the coordinates of nonlinear and defect pixels to create a mask.
+;  * Reads a directory of FITS files and identifies and outputs the coordinates of hot pixels and dead pixels.
+;  * Coordinates of defect pixels are also stored in corresponding arrays for referencing.
+;  *
+;  * This code assumes that the darks and images are taken separately, and each in order of increasing exposure
+;  *    i.e. an example directory would be (1.5 ms img, 3 ms img, 4.5 ms img, 1.5 ms dark, 3 ms dark, 4.5 ms dark)
+;  *
+;  * If this criteria is not met, use the "niris_mask" code instead, which accounts for scrambled data (images not in increasing exposure order).
 ; */
 
-; PROBLEM: even if pixle is dead or hot, if there is a very minor but consistent linear increase it will pass as a non-defective pixel
-; SOLUTION: add in separate standards for dead and hot pixels? maybe if the difference between the starting and ending is too small mark it as defective
-    ; ... or perform another slope hypothesis test lol
-    
-;!EXCEPT = 0
-
+; Select the directory with the image FITS files
 dir = dialog_pickfile(/directory,path='c:\')
 list = file_search( dir + '*.fts' , count = n )
 
@@ -31,88 +32,106 @@ ysize = float(strmid(ylen, ystart, ycount))
 ; (px3)[2000, 2031, 2403, ...]
 ; ...
 exposures = fltarr(n/2)
-signals = fltarr(n/2, (xsize*ysize))
+signals = fltarr(n/2, (xsize*ysize)) & imgsig = signals
 mask = fltarr(xsize, ysize)
 
-; Arrays for troubleshooting/testing purposes:
-nonlins = fltarr(xsize, ysize) & pvals = nonlins & incs = nonlins
+; Arrays holding the coordinates of nonlinear, dead, and hot pixels
+nonlins = fltarr(xsize, ysize) & dead = nonlins & hot = nonlins
 
 ;=============================== READ AND ANALYZE IMAGES ===============================
 
 ; For each image...
 for i = 0, (n/2)-1 do begin
-  ; Subtract dark images
+  ; Subtract dark images, choosing the middle frame
   img = readfits(list[i], header)
   dk = readfits(list[i+(n/2)])
-  res = img - dk
+
+  img0 = img[*,*, FLOOR((size(img))[3]/2)]
+  dk0 = dk[*,*, FLOOR((size(dk))[3]/2)]
+  
+  ; dk0 is not subtracted directly from img0 (instead, each pixel is subtracted individually) to account for
+  ;   instances where the pixel's signal may be higher in the dark than the image.
+  ; Due to the way IDL works, if the resulting subtracted signal is negative, the value is 'looped' to where saturation
+  ;   is considered '0' (e.g. -5 ADU is converted to 65531 ADU). Thus, this code corrects for this issue and sets any
+  ;   negative signal values to 0.
+  res = fltarr(xsize, ysize)
+  for y = 0, ysize-1 do begin
+    for x = 0, xsize-1 do begin
+      if (FLOAT(img0[x,y]) - FLOAT(dk0[x,y])) lt 0 then begin
+        res[x,y] = 0
+      endif else begin
+        res[x,y] = FLOAT(img0[x,y] - dk0[x,y])
+      endelse
+    endfor
+  endfor
 
   ; Add each pixel's signal for the current image to the signals array
   curr = 0UL;
-  res0 = res[*,*, FLOOR((size(res))[3]/2)]
   for y = 0, ysize-1 do begin
     for x = 0, xsize-1 do begin
-      signals[i, curr] = res0[x,y]
+      ; Post-dark subtraction
+      signals[i, curr] = res[x,y]
+      ; Pre-dark subtraction
+      imgsig[i, curr] = img0[x,y]
       curr++
     endfor
-  endfor 
+  endfor
 
-  ; The recorded exposure for each image is added to the exposures array.
+  ; The recorded exposure for each image is added to the exposures array
   exp = header[26] & expsub = strmid(exp, 0, strpos(exp, '.'))
   start = strpos(expsub, ' ', /REVERSE_SEARCH) + 1
   count = strpos(exp, '/') - start - 1
   exposures[i] = float(strmid(exp, start, count))
 endfor
 
-; NOTE: the linear range should be a multiple of the exposure interval
 READ, linrange, PROMPT='Please enter the linear range (ADU): '
-linindex = 0
+
+linindex = (n/2)-1
+; Determines the index to regress over (the linear range) based on the inputted value.
+; The average signal atn each exposure time is manually calculated to ignore pixels outside of the focus area (if the sun is used for testing).
+; If a uniform light source is used, this functions the exact same as the avg() method.
 for i = 0, (n/2)-2 do begin
-  if (avg(signals[i,*]) le linrange) and (avg(signals[i+1,*]) ge linrange) then begin
+  avgsig = 0.0
+  avgsignext = 0.0
+  count = 0.0
+  
+  ; Only uses pixels that saturate or nearly saturate over the entire testing range (all pixels that are illuminated) 
+  ;   to be used in calculating the average.
+  ; Here, I've determined that any pixels that increase more than 10000 ADU between the lowest and highest exposures tested
+  ;   must be pixels within the area of interest (pixels outside of the viewing area of the sun stay at near-zero signal at 
+  ;   any exposure), as the saturation value is 65536 ADU.
+  ; This threshold may need to be changed for cameras with a different bit-depth and saturation value. For example, for a 12-bit
+  ;   camera may want a threshold of 400 ADU instead. This is not majorly important as all pixels of interest should fully saturate
+  ;   while all other pixels should always stay at nearly zero signal, so the threshold only needs to be below the saturation value.
+  for k = 0, xsize*ysize-1 do begin
+    if ~(avg(signals[*,k]) lt 10000) then begin
+      avgsig += signals[i,k]
+      avgsignext += signals[i+1,k]
+      count++
+    endif
+  endfor
+  avgsig /= count
+  avgsignext /= count
+  
+  ; At each index, checks if the inputted linear range (in ADU) is between the average signal of the current index and
+  ;   the average signal of the next index.
+  if (avgsig le linrange) and (avgsignext ge linrange) then begin
     linindex = i
     break
   endif
+  print, i
 endfor
 
 interval = exposures[1] - exposures[0]
 
-;; For each pixel...
-;for i = 0, (xsize*ysize) do begin
-;  ; Calculate and add nonlinearities and correlation coefficients to the corresponding arrays
-;  coeff = LINFIT(exposures[0:linindex], signals[0:linindex, i])
-;  corr = CORRELATE(exposures[0:linindex], signals[0:linindex, i])
-;  
-;  mini = signals[linindex,i]
-;  maxi = 0.0
-;  maxsig = 0.0
-;  for index = 0, linindex do begin
-;    curr = res[index,i] - (coeff[1]*exposures[index] + coeff[0])
-;    if curr gt maxi then begin
-;      maxi = curr
-;    endif
-;    if curr lt mini then begin
-;      mini = curr
-;    endif
-;    if signals[index,i] gt maxsig then begin
-;      maxsig = signals[index,i]
-;    endif
-;  endfor
-;  
-;  nonlin = ((maxi+abs(mini))/maxsig)*100
-;  nonlins[i] = nonlin
-;  corrs[i] = corr
-;endfor
+;====================== NONLINEARITY ======================
 
-;====================== NONLINEARITY AND CORRELATION-COEFFICIENTS ======================
+print, 'Coordinates of nonlinear pixels: '
 
-print, 'Coordinates of defect/nonlinear pixels: '
-mx = (RUNNING_STATS(signals[linindex,*]))[0]
-
-; For each pixel, calculate the nonlinearity and correlation coefficient.
-; Then, determine if the pixel should be masked and add its coordinates to an array.
+; For each pixel, calculate the nonlinearity and determine if the pixel is exceedingly nonlinear.
 for i = 0, (xsize*ysize)-1 do begin
+  ; Perform a linear regression and calculate nonlinearity
   coeff = LINFIT(exposures[0:linindex], signals[0:linindex, i])
-  corr = CORRELATE(exposures[0:linindex], signals[0:linindex, i])
-
   mini = signals[linindex,i]
   maxi = 0.0
   maxsig = 0.0
@@ -128,7 +147,7 @@ for i = 0, (xsize*ysize)-1 do begin
       maxsig = signals[index,i]
     endif
   endfor
-  
+
   ; If a pixel is completely dead (max signal of 0), do not calculate nonlinearity as it will
   ; attempt to divide by 0 and result in NaN. Instead, immediately mark with a 100% nonlinearity.
   if maxsig eq 0 then begin
@@ -136,52 +155,51 @@ for i = 0, (xsize*ysize)-1 do begin
   endif else begin
     nonlin = ((maxi+abs(mini))/maxsig)*100
   endelse
-  
-  ;----- Calculating the p-value of the OLS linear regression using a statistical t-test -----
 
-  n = linindex + 1
-  X = fltarr(n,2)
-  X[*, 0] = 1.0
-  X[*, 1] = exposures[0:linindex]
-  
-  XT = TRANSPOSE(X)
-  XTX = XT # X
-  XTX_inv = INVERT(XTX)
-  XTY = XT # (signals[0:linindex, i])
-  beta = XTX_inv # XTY
-  pred = X # beta
-  
-  xsum = TOTAL((exposures[0:linindex] - avg(exposures[0:linindex]))^2)
-  ysum = TOTAL((signals[0:linindex, i] - pred)^2)
-  serr = sqrt(ysum/((n-2)*(xsum)))
-  tstat = beta[1]/serr
-  
-  pval = 1 - t_pdf(tstat, n-2)
-  
-  ;----- Mark pixels defective based on nonlinearity and correlation (using a alpha level of 0.05) -----
-  
+  ; Determine the (x,y) coordinates of the current pixel
   xc = i MOD xsize
   yc = FLOOR(i/xsize)
- 
-  inc = signals[linindex, i] - signals[0, i]
-  
-  ; If the pixel has a nonlinearity greater than 5%, a p-value larger than 0.05, or an weak linear slope...   
-  if (nonlin gt 5) or (pval gt 0.05) or (inc lt (mx/2)) then begin
+
+  ; If the pixel has a nonlinearity greater than 10%, it is recorded as a particularly nonlinear pixel and printed to the console.
+  ; Depending on what you consider to be 'overly nonlinear', this threshold value is not concrete, and should be changed.
+  if (nonlin gt 10) then begin
     mask[xc, yc] = 1
+    nonlins[xc, yc] = nonlin
     print, '('+strtrim(string(xc),2)+', '+strtrim(string(yc),2)+')
   endif else begin
     mask[xc, yc] = 0
   endelse
-  
-  ; For troubleshooting/testing
-  if nonlin gt 5 then begin
-    nonlins[xc, yc] = nonlin
+endfor
+
+;====================== DEAD PIXELS AND HOT PIXELS ======================
+
+print, 'Coordinates of dead pixels and hot pixels: '
+
+; Testing for hot pixels - checks if the pixel saturates unnaturally quickly.
+; Testing for dead pixels - checks if the pixel is nearly zero when it should be saturated.
+hotindex = FLOOR(linindex/2)
+for i = 0, (xsize*ysize)-1 do begin
+  ; (x,y) coordinates
+  xc = i MOD xsize
+  yc = FLOOR(i/xsize)
+
+  ; At the highest exposure tested, the current pixel should be saturated. If not, and if the signal is sufficiently near zero, 
+  ;   mark it as a dead pixel and print its coordinates to the console.
+  ; Depending on what you consider to be 'near zero', this threshold value is not concrete, and should be changed.
+  ;   However, this threshold value must not be greater than the saturation value.
+  if imgsig[(n/2)-1,i] lt 10000 then begin
+    dead[xc,yc] = 1
+    mask[xc,yc] = 1
+    print, 'dead: ('+strtrim(string(xc),2)+', '+strtrim(string(yc),2)+')
   endif
-  if pval gt 0.05 then begin
-    pvals[xc, yc] = pval
-  endif
-  if inc lt mx/2 then begin
-    incs[xc, yc] = 1
+
+  ; At the index of half the linear range, the pixel should not be saturated (it should show a signal of roughly saturation/2).
+  ;   If the pixel is saturated at this index, mark it as a hot pixel and print its coordinates to the console.
+  ; Depending on your definition of a hot pixel, the hotindex variable should be modified to look for pixels that saturate even quicker, or slower.
+  if imgsig[hotindex,i] ge avg(signals[(n/2)-1,i]) then begin
+    hot[xc,yc] = 1
+    mask[xc,yc] = 1
+    print, 'hot: ('+strtrim(string(xc),2)+', '+strtrim(string(yc),2)+')
   endif
 endfor
 
